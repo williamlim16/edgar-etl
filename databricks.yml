@@ -1,0 +1,19 @@
+bundle:
+  name: EDGAR_Dataset
+
+
+include:
+  - src/*.yml
+  - src/env/*.yml
+
+permissions:
+  - group_name: de_group
+    level: CAN_MANAGE
+
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://dbc-4be45d81-4fd9.cloud.databricks.com
