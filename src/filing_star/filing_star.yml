@@ -1,0 +1,14 @@
+resources:
+  pipelines:
+    filing_star:
+      name: filing_star
+      catalog: edgar
+      target: fct
+      libraries:
+        - glob:
+            include: transformations/**
+      root_path: ./
+      serverless: true
+      continuous: false
+      photon: true
+      channel: current

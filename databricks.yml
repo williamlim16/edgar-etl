@@ -3,11 +3,10 @@ bundle:
 
 
 include:
-  - src/*.yml
-  - src/env/*.yml
+  - src/**/*.yml
 
 permissions:
-  - group_name: de_group
+  - user_name: williaml1601@gmail.com
     level: CAN_MANAGE
 
 

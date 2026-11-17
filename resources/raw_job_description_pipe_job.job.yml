@@ -1,0 +1,18 @@
+resources:
+  jobs:
+    raw_job_description_pipe_job:
+      name: raw_job_description_pipe job
+      tasks:
+        - task_key: raw_job_description_pipe_job
+          pipeline_task:
+            pipeline_id: 8b091c06-3770-496d-b73b-dbe8c4f17644
+          run_if: ALL_SUCCESS
+          timeout_seconds: 0
+      email_notifications: {}
+      max_concurrent_runs: 1
+      trigger:
+        pause_status: PAUSED
+        periodic:
+          interval: 6
+          unit: HOURS
+      webhook_notifications: {}

@@ -1,0 +1,8 @@
+resources:
+  jobs:
+    edgar_ingest:
+      name: edgar_ingest
+      tasks:
+        - task_key: edgar_ingest
+          notebook_task:
+            notebook_path: ./EDGAR_ingest.py
