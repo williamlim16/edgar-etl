@@ -26,6 +26,10 @@ variables:
     default: dim
   mrt_schema:
     default: mrt
+  # Pipelines run in development mode (allows full-refresh backfills)
+  # in dev, production mode in the prod target.
+  pipeline_mode:
+    default: development
 
 
 targets:
@@ -39,10 +43,9 @@ targets:
     mode: production
     workspace:
       host: https://dbc-4be45d81-4fd9.cloud.databricks.com
-      # ${workspace.current_user.userName} resolves at deploy time to whoever
-      # runs `bundle deploy`, so teammates each deploy into their own home
-      # folder instead of fighting over one hardcoded path. For true prod,
-      # deploy via CI/CD as a service principal so this resolves consistently.
-      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+      root_path: /Workspace/Users/williaml1601@gmail.com/.bundle/${bundle.name}/${bundle.target}
+    tags:
+      environment: prod
     variables:
       catalog: edgar_prod
+      pipeline_mode: production
