@@ -10,9 +10,39 @@ permissions:
     level: CAN_MANAGE
 
 
+# Destination catalog/schemas are DAB variables so each target (dev/prod)
+# can point at its own catalog. Best practice: one catalog per environment
+# (e.g. edgar_dev / edgar_prod) with identical schema names inside each,
+# so the code never changes between environments.
+variables:
+  catalog:
+    description: Unity Catalog catalog that holds all EDGAR data
+    default: edgar
+  stg_schema:
+    default: stg
+  fct_schema:
+    default: fct
+  dim_schema:
+    default: dim
+  mrt_schema:
+    default: mrt
+
+
 targets:
   dev:
     mode: development
     default: true
     workspace:
       host: https://dbc-4be45d81-4fd9.cloud.databricks.com
+
+  prod:
+    mode: production
+    workspace:
+      host: https://dbc-4be45d81-4fd9.cloud.databricks.com
+      # ${workspace.current_user.userName} resolves at deploy time to whoever
+      # runs `bundle deploy`, so teammates each deploy into their own home
+      # folder instead of fighting over one hardcoded path. For true prod,
+      # deploy via CI/CD as a service principal so this resolves consistently.
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      catalog: edgar_prod

@@ -1,16 +1,15 @@
-# Deploys the EDGAR_Dataset bundle to the prod target as a Databricks
-# service principal, using workload identity federation (GitHub OIDC).
-# No Databricks secrets are stored in this repo: the runner gets a
-# short-lived OIDC token from GitHub, and Databricks exchanges it for an
-# OAuth token via the federation policy configured on the service
-# principal.
+# Deploys the EDGAR_Dataset bundle to the prod target as the Databricks
+# service principal (edgar_data) using OAuth M2M client credentials.
+# NOTE: OIDC workload-identity federation is not available on Databricks
+# Free Edition (no account-level APIs), so the SP's OAuth secret is stored
+# as an encrypted GitHub secret instead.
 #
-# One-time setup:
-#   1. Create a Databricks service principal and a GitHub OIDC federation
-#      policy scoped to repo:williamlim16/edgar-etl, environment "prod".
-#   2. Add the SP to the workspace and grant it access to edgar_prod.
-#   3. In GitHub repo settings: create the "prod" environment, and add
-#      repository variables DATABRICKS_HOST and DATABRICKS_CLIENT_ID.
+# One-time setup (done):
+#   - Databricks: OAuth secret generated for edgar_data in workspace
+#     settings (Secrets tab).
+#   - GitHub: repository secrets DATABRICKS_HOST, DATABRICKS_CLIENT_ID,
+#     DATABRICKS_CLIENT_SECRET (the workflow accepts variables for HOST /
+#     CLIENT_ID too), and a repository environment named "prod".
 name: Deploy EDGAR bundle (prod)
 
 on:
@@ -18,18 +17,11 @@ on:
     branches: [main]
   workflow_dispatch: {}
 
-# id-token: write is required for GitHub to issue the OIDC token that
-# Databricks exchanges for a short-lived OAuth token.
-permissions:
-  id-token: write
-  contents: read
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # Uses the GitHub environment named "prod" (Settings > Environments).
-    # The federation policy's subject claim matches this environment, so
-    # only runs of this workflow in this environment can authenticate.
+    # GitHub environment "prod" (Settings > Environments) - kept so you can
+    # later add required reviewers / protection rules before prod deploys.
     environment: prod
     steps:
       - name: Checkout
@@ -38,26 +30,20 @@ jobs:
       - name: Install Databricks CLI
         uses: databricks/setup-cli@main
 
-      # Uncomment temporarily to print the OIDC subject claim if the
-      # federation policy needs fixing:
-      # - name: Debug OIDC subject
-      #   run: |
-      #     curl -s -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-      #       "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=databricks" | jq -r '.value' \
-      #       | cut -d. -f2 | base64 -d | jq -r '.sub'
-
       - name: Validate bundle
         run: databricks bundle validate --target prod
         working-directory: .
         env:
-          DATABRICKS_AUTH_TYPE: github-oidc
-          DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST }}
-          DATABRICKS_CLIENT_ID: ${{ vars.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_AUTH_TYPE: oauth-m2m
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST || vars.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID || vars.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
 
       - name: Deploy bundle
         run: databricks bundle deploy --target prod
         working-directory: .
         env:
-          DATABRICKS_AUTH_TYPE: github-oidc
-          DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST }}
-          DATABRICKS_CLIENT_ID: ${{ vars.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_AUTH_TYPE: oauth-m2m
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST || vars.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID || vars.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
