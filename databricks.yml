@@ -38,6 +38,9 @@ targets:
     default: true
     workspace:
       host: https://dbc-4be45d81-4fd9.cloud.databricks.com
+    presets:
+      tags:
+        environment: dev
 
   prod:
     mode: production
