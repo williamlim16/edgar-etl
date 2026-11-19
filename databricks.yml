@@ -44,8 +44,9 @@ targets:
     workspace:
       host: https://dbc-4be45d81-4fd9.cloud.databricks.com
       root_path: /Workspace/Users/williaml1601@gmail.com/.bundle/${bundle.name}/${bundle.target}
-    tags:
-      environment: prod
+    presets:
+      tags:
+        environment: prod
     variables:
       catalog: edgar_prod
       pipeline_mode: production
