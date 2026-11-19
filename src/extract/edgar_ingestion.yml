@@ -6,3 +6,9 @@ resources:
         - task_key: edgar_ingest
           notebook_task:
             notebook_path: ./EDGAR_ingest.py
+            base_parameters:
+              catalog: ${var.catalog}
+              stg_schema: ${var.stg_schema}
+              fct_schema: ${var.fct_schema}
+              dim_schema: ${var.dim_schema}
+              mrt_schema: ${var.mrt_schema}

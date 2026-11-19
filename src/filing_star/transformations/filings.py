@@ -7,9 +7,15 @@ from pyspark.sql.types import (
     ArrayType, LongType, MapType
 )
 from utilities.payload_schema import payload_schema
+
+# Catalog/schema come from pipeline configuration (src/filing_star/filing_star.yml),
+# which the DAB resolves per target — no hardcoded catalog here.
+CATALOG = spark.conf.get("catalog")
+STG_SCHEMA = spark.conf.get("stg_schema")
+
 @dp.materialized_view(name="fct_filings")
 def fct_filings():
-    data = spark.read.table("edgar.stg.stg_submissions_raw")
+    data = spark.read.table(f"{CATALOG}.{STG_SCHEMA}.stg_submissions_raw")
 
     base = data.withColumn(
         "payload", from_json(col("raw_payload"), payload_schema)

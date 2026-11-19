@@ -14,7 +14,26 @@ import pyspark.sql.functions as F
 
 # COMMAND ----------
 
+# DBTITLE 1,Config: CIK + destination catalog/schemas
 COMPANY_CIK = "CIK0001045810"
+
+# Destination is DAB-configurable: the deployed job passes these as notebook
+# parameters (base_parameters in src/extract/edgar_ingestion.yml, resolved from
+# bundle variables per target); interactive runs fall back to the defaults below.
+dbutils.widgets.text("catalog", "edgar")
+dbutils.widgets.text("stg_schema", "stg")
+dbutils.widgets.text("fct_schema", "fct")
+dbutils.widgets.text("dim_schema", "dim")
+dbutils.widgets.text("mrt_schema", "mrt")
+
+CATALOG = dbutils.widgets.get("catalog")
+STG_SCHEMA = dbutils.widgets.get("stg_schema")
+FCT_SCHEMA = dbutils.widgets.get("fct_schema")
+DIM_SCHEMA = dbutils.widgets.get("dim_schema")
+MRT_SCHEMA = dbutils.widgets.get("mrt_schema")
+
+STG = f"{CATALOG}.{STG_SCHEMA}"
+VOL = f"/Volumes/{CATALOG}/{STG_SCHEMA}/vol"
 
 # COMMAND ----------
 
@@ -29,42 +48,47 @@ COMPANY_CIK = "CIK0001045810"
 # COMMAND ----------
 
 # DBTITLE 1,Setup schemas and objects
-# MAGIC %sql
-# MAGIC USE CATALOG edgar;
-# MAGIC CREATE SCHEMA IF NOT EXISTS stg;
-# MAGIC CREATE SCHEMA IF NOT EXISTS fct;
-# MAGIC CREATE SCHEMA IF NOT EXISTS mrt;
-# MAGIC USE SCHEMA stg;
-# MAGIC CREATE TABLE IF NOT EXISTS stg_submissions_raw;
-# MAGIC CREATE TABLE IF NOT EXISTS edgar.stg.ingestion_control (
-# MAGIC     cik STRING,
-# MAGIC     endpoint STRING,
-# MAGIC     payload_hash STRING,
-# MAGIC     max_acceptance_datetime STRING,
-# MAGIC     last_fetch_at TIMESTAMP
-# MAGIC );
-# MAGIC -- The control table is now keyed on (cik, endpoint) so both endpoints can track one CIK.
-# MAGIC -- One-time migration of the existing table (add + backfill `endpoint`) runs in the next Python cell.
-# MAGIC -- Thin snapshot table for /xbrl: the raw payload stays in the volume, not in the table.
-# MAGIC CREATE TABLE IF NOT EXISTS edgar.stg.stg_xbrl_raw (
-# MAGIC     cik STRING,
-# MAGIC     entity_name STRING,
-# MAGIC     max_filed STRING,
-# MAGIC     volume_path STRING,
-# MAGIC     ingested_at TIMESTAMP,
-# MAGIC     endpoint STRING
-# MAGIC );
-# MAGIC CREATE VOLUME IF NOT EXISTS edgar.stg.vol;
+# Idempotent setup — schemas, tables, and the volume live in the DAB-configured
+# catalog/schemas defined in the config cell above.
+spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.{STG_SCHEMA}")
+spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.{FCT_SCHEMA}")
+spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.{DIM_SCHEMA}")
+spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.{MRT_SCHEMA}")
+
+spark.sql(f"CREATE TABLE IF NOT EXISTS {STG}.stg_submissions_raw")
+# Control table keyed on (cik, endpoint) so both endpoints can track one CIK.
+# One-time migration of the existing table (add + backfill `endpoint`) runs in the next Python cell.
+spark.sql(f"""
+    CREATE TABLE IF NOT EXISTS {STG}.ingestion_control (
+        cik STRING,
+        endpoint STRING,
+        payload_hash STRING,
+        max_acceptance_datetime STRING,
+        last_fetch_at TIMESTAMP
+    )
+""")
+# Thin snapshot table for /xbrl: the raw payload stays in the volume, not in the table.
+spark.sql(f"""
+    CREATE TABLE IF NOT EXISTS {STG}.stg_xbrl_raw (
+        cik STRING,
+        entity_name STRING,
+        max_filed STRING,
+        volume_path STRING,
+        ingested_at TIMESTAMP,
+        endpoint STRING
+    )
+""")
+spark.sql(f"CREATE VOLUME IF NOT EXISTS {CATALOG}.{STG_SCHEMA}.vol")
 
 # COMMAND ----------
 
 # DBTITLE 1,Migrate ingestion_control to (cik, endpoint) key
 # One-time migration: the control table predates the `endpoint` column (keyed on (cik, endpoint) now).
-cols = {r["col_name"] for r in spark.sql("DESCRIBE TABLE edgar.stg.ingestion_control").collect()}
+cols = {r["col_name"] for r in spark.sql(f"DESCRIBE TABLE {STG}.ingestion_control").collect()}
 if "endpoint" not in cols:
-    spark.sql("ALTER TABLE edgar.stg.ingestion_control ADD COLUMN endpoint STRING")
-    print("Added `endpoint` column to edgar.stg.ingestion_control.")
-spark.sql("UPDATE edgar.stg.ingestion_control SET endpoint = '/submissions' WHERE endpoint IS NULL")
+    spark.sql(f"ALTER TABLE {STG}.ingestion_control ADD COLUMN endpoint STRING")
+    print(f"Added `endpoint` column to {STG}.ingestion_control.")
+spark.sql(f"UPDATE {STG}.ingestion_control SET endpoint = '/submissions' WHERE endpoint IS NULL")
 print("Existing control rows backfilled with endpoint = '/submissions'.")
 
 # COMMAND ----------
@@ -86,7 +110,7 @@ max_acc = max(data["filings"]["recent"]["acceptanceDateTime"])
 
 # Look up the last ingested hash for this CIK + endpoint
 cik = str(data["cik"])
-ctrl_rows = (spark.table("edgar.stg.ingestion_control")
+ctrl_rows = (spark.table(f"{STG}.ingestion_control")
              .filter((F.col("cik") == cik) & (F.col("endpoint") == "/submissions"))
              .collect())
 stored_hash = ctrl_rows[0]["payload_hash"] if ctrl_rows else None
@@ -99,7 +123,7 @@ print(f"Hash {'differs from' if changed else 'matches'} stored hash — payload 
 # DBTITLE 1,Append to stg_submissions_raw
 if changed:
     # (i) write raw JSON file to the volume
-    dbutils.fs.put(f"/Volumes/edgar/stg/vol/raw_submissions/{COMPANY_CIK}.json", payload_str, overwrite=True)
+    dbutils.fs.put(f"{VOL}/raw_submissions/{COMPANY_CIK}.json", payload_str, overwrite=True)
     print("File uploaded successfully!")
 
     # (ii) append snapshot to stg_submissions_raw
@@ -111,11 +135,11 @@ if changed:
         "ingested_at": datetime.now(timezone.utc),
         "endpoint": "/submissions"
     }])
-    stg_df.write.mode("append").saveAsTable("edgar.stg.stg_submissions_raw", mergeSchema=True)
+    stg_df.write.mode("append").saveAsTable(f"{STG}.stg_submissions_raw", mergeSchema=True)
 
     # (iii) upsert the control row
     spark.sql(f"""
-        MERGE INTO edgar.stg.ingestion_control AS t
+        MERGE INTO {STG}.ingestion_control AS t
         USING (SELECT '{cik}' AS cik, '/submissions' AS endpoint, '{payload_hash}' AS payload_hash,
                       '{max_acc}' AS max_acceptance_datetime,
                       current_timestamp() AS last_fetch_at) AS s
@@ -160,7 +184,7 @@ max_filed = max(fact["filed"] for fact in all_facts)
 # Look up the last ingested hash for this CIK + endpoint
 # companyfacts returns cik as an int (no zero-padding) — pad to match the /submissions CIK format
 cik = str(data["cik"]).zfill(10)
-ctrl_rows = (spark.table("edgar.stg.ingestion_control")
+ctrl_rows = (spark.table(f"{STG}.ingestion_control")
              .filter((F.col("cik") == cik) & (F.col("endpoint") == "/xbrl"))
              .collect())
 stored_hash = ctrl_rows[0]["payload_hash"] if ctrl_rows else None
@@ -173,7 +197,7 @@ print(f"Max filed date across {len(all_facts)} facts: {max_filed}")
 # DBTITLE 1,Append xbrl snapshot to stg_xbrl_raw
 if changed:
     # (i) write raw JSON file to the volume — the full payload lives here, not in the table
-    volume_path = f"/Volumes/edgar/stg/vol/raw_xbrl/{COMPANY_CIK}.json"
+    volume_path = f"{VOL}/raw_xbrl/{COMPANY_CIK}.json"
     dbutils.fs.put(volume_path, payload_str, overwrite=True)
     print("File uploaded successfully!")
 
@@ -186,11 +210,11 @@ if changed:
         "ingested_at": datetime.now(timezone.utc),
         "endpoint": "/xbrl"
     }])
-    stg_df.write.mode("append").saveAsTable("edgar.stg.stg_xbrl_raw", mergeSchema=True)
+    stg_df.write.mode("append").saveAsTable(f"{STG}.stg_xbrl_raw", mergeSchema=True)
 
     # (iii) upsert the control row
     spark.sql(f"""
-        MERGE INTO edgar.stg.ingestion_control AS t
+        MERGE INTO {STG}.ingestion_control AS t
         USING (SELECT '{cik}' AS cik, '/xbrl' AS endpoint, '{payload_hash}' AS payload_hash,
                       '{max_filed}' AS max_acceptance_datetime,
                       current_timestamp() AS last_fetch_at) AS s

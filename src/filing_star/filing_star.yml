@@ -2,8 +2,16 @@ resources:
   pipelines:
     filing_star:
       name: filing_star
-      catalog: edgar
-      target: fct
+      catalog: ${var.catalog}
+      target: ${var.fct_schema}
+      # Development mode is controlled by the target's `mode` in databricks.yml
+      # (dev target = development, prod target = production), not per-pipeline.
+      # Exposed to pipeline code as spark.conf.get("catalog") etc., so
+      # transformations can resolve stg/dim tables in the deployed target's catalog.
+      configuration:
+        catalog: ${var.catalog}
+        stg_schema: ${var.stg_schema}
+        dim_schema: ${var.dim_schema}
       libraries:
         - glob:
             include: transformations/**
